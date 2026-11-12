@@ -1,0 +1,942 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Billboard inventory map (demo)</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Overpass:wght@400;600;700;800&display=swap">
+<style>
+  :root {
+    --green: #0B5D3B;
+    --green-dark: #084A2F;
+    --asphalt: #22272A;
+    --concrete: #EEF1EF;
+    --line: #D5DBD8;
+    --muted: #5C6864;
+    --amber: #F3B21B;
+    --amber-dark: #D99A06;
+    --white: #FFFFFF;
+    color-scheme: light;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: "Overpass", "Helvetica Neue", Arial, sans-serif;
+    color: var(--asphalt);
+    background: var(--concrete);
+    -webkit-font-smoothing: antialiased;
+  }
+  #map { position: fixed; inset: 0; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  :focus-visible { outline: 3px solid var(--amber); outline-offset: 2px; }
+
+  /* ---------- Side panel ---------- */
+  .panel {
+    position: absolute;
+    top: calc(16px + env(safe-area-inset-top, 0px));
+    left: 16px;
+    width: 340px;
+    max-height: calc(100% - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    display: flex;
+    flex-direction: column;
+    background: var(--white);
+    border-radius: 12px;
+    box-shadow: 0 1px 2px rgba(20, 35, 28, .14), 0 10px 28px rgba(20, 35, 28, .16);
+    z-index: 3;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 16px 12px;
+    background: var(--green); color: var(--white);
+    border-radius: 12px 12px 0 0;
+  }
+  .logo {
+    flex: none;
+    border: 2px solid var(--white); border-radius: 6px;
+    padding: 4px 7px 2px; font-weight: 800; font-size: 12px; line-height: 1.2;
+  }
+  .brand h1 { margin: 0; font-size: 19px; font-weight: 800; line-height: 1.1; }
+  .brand p { margin: 2px 0 0; font-size: 13px; opacity: .85; }
+
+  .search { position: relative; padding: 12px 12px 6px; display: flex; gap: 8px; }
+  .search-field { position: relative; flex: 1; }
+  .search-field svg { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+  .search input {
+    width: 100%; font-size: 15px;
+    padding: 11px 34px 9px 36px;
+    border: 1.5px solid var(--line); border-radius: 8px; background: var(--white);
+  }
+  .search input:focus { outline: none; border-color: var(--green); box-shadow: 0 0 0 3px rgba(11, 93, 59, .18); }
+  .clear-q {
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    width: 26px; height: 26px; border: 0; border-radius: 50%; background: transparent;
+    font-size: 18px; line-height: 1; cursor: pointer; color: var(--muted);
+  }
+  .clear-q:hover { background: var(--concrete); }
+  .filter-toggle {
+    display: none; align-items: center; gap: 6px;
+    border: 1.5px solid var(--line); border-radius: 8px; background: var(--white);
+    padding: 0 12px; font-weight: 700; font-size: 14px; cursor: pointer;
+  }
+  .filter-toggle .n { background: var(--green); color: var(--white); border-radius: 10px; padding: 1px 7px 0; font-size: 12px; }
+
+  .suggest {
+    position: absolute; left: 12px; right: 12px; top: calc(100% - 2px);
+    margin: 0; padding: 4px; list-style: none;
+    background: var(--white); border: 1px solid var(--line); border-radius: 8px;
+    box-shadow: 0 10px 24px rgba(20, 35, 28, .18); z-index: 5;
+  }
+  .suggest button {
+    width: 100%; text-align: left; border: 0; background: transparent; cursor: pointer;
+    padding: 8px 10px 6px; border-radius: 6px; display: grid; grid-template-columns: auto 1fr; column-gap: 10px;
+  }
+  .suggest li.active button, .suggest button:hover { background: var(--concrete); }
+  .suggest .no { font-weight: 800; color: var(--green); }
+  .suggest .where { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .suggest .sub { grid-column: 2; font-size: 13px; color: var(--muted); }
+  .suggest .none { padding: 10px; font-size: 14px; color: var(--muted); }
+
+  .result-line {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 2px 16px 10px; font-size: 13px; color: var(--muted);
+  }
+  .linkbtn { border: 0; background: none; padding: 0; color: var(--green); font-weight: 700; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+
+  .menus { overflow-y: auto; overscroll-behavior: contain; min-height: 0; border-radius: 0 0 12px 12px; }
+  .search input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+  details { border-top: 1px solid var(--line); }
+  summary {
+    list-style: none; cursor: pointer;
+    display: flex; align-items: center; gap: 8px;
+    padding: 12px 16px 10px; font-weight: 700; font-size: 15px;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary .meta { margin-left: auto; font-weight: 600; font-size: 13px; color: var(--green); }
+  summary .chev { flex: none; transition: transform .18s ease; color: var(--muted); }
+  details[open] > summary .chev { transform: rotate(180deg); }
+  summary:hover { background: #F6F8F7; }
+  .opts { padding: 0 8px 10px; }
+  .opts label {
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 8px 4px; border-radius: 6px; cursor: pointer; font-size: 15px;
+  }
+  .opts label:hover { background: #F6F8F7; }
+  .opts label.zero { opacity: .45; }
+  .opts input[type="checkbox"], .opts input[type="radio"] { accent-color: var(--green); width: 17px; height: 17px; margin: 0 0 2px; }
+  .count { margin-left: auto; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+
+  .plist { list-style: none; margin: 0; padding: 0 8px 10px; }
+  .plist button {
+    width: 100%; text-align: left; border: 0; background: transparent; cursor: pointer;
+    display: grid; grid-template-columns: 52px 1fr; column-gap: 8px;
+    padding: 7px 8px 5px; border-radius: 6px;
+  }
+  .plist button:hover { background: #F6F8F7; }
+  .plist .no { font-weight: 800; color: var(--green); }
+  .plist .where { font-weight: 600; }
+  .plist .sub { grid-column: 2; font-size: 13px; color: var(--muted); }
+  .plist .empty { padding: 8px; font-size: 14px; color: var(--muted); }
+
+  .demo-note {
+    position: absolute; left: 16px; bottom: calc(14px + env(safe-area-inset-bottom, 0px)); z-index: 2;
+    background: rgba(255, 255, 255, .92); border-radius: 6px; padding: 5px 10px 3px;
+    font-size: 12px; color: var(--muted);
+  }
+
+  /* ---------- Panel card (popup + mobile sheet) ---------- */
+  .panel-popup .maplibregl-popup-content {
+    padding: 0; border-radius: 12px; overflow: hidden;
+    box-shadow: 0 12px 32px rgba(15, 30, 22, .3);
+  }
+  .panel-popup.maplibregl-popup-anchor-bottom .maplibregl-popup-tip { border-top-color: var(--white); }
+  .panel-popup .maplibregl-popup-close-button {
+    top: 8px; right: 8px; width: 30px; height: 30px; border-radius: 50%;
+    background: rgba(255, 255, 255, .94); font-size: 22px; line-height: 28px; color: var(--asphalt); z-index: 2;
+  }
+  .card { width: 320px; font-size: 14px; line-height: 1.45; }
+  .card .photo { position: relative; background: #C9D3D8; aspect-ratio: 16 / 10; }
+  .card .photo img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .card .tag {
+    position: absolute; left: 10px; top: 10px;
+    background: var(--amber); color: var(--asphalt); font-weight: 800; font-size: 12px;
+    border-radius: 4px; padding: 3px 7px 1px;
+  }
+
+  /* The highway-sign band: the one bold element */
+  .sign { background: var(--green); padding: 5px; }
+  .sign-inner {
+    border: 2px solid var(--white); border-radius: 7px;
+    padding: 8px 11px 5px; color: var(--white);
+    display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  }
+  .sign-no { font-weight: 800; font-size: 24px; line-height: 1; letter-spacing: .01em; }
+  .sign-id { font-size: 13px; font-weight: 600; opacity: .92; white-space: nowrap; }
+
+  .card-body { padding: 12px 14px 14px; }
+  .card .loc { margin: 0 0 10px; }
+  .card .loc strong { font-weight: 700; }
+  .card h3 { margin: 0 0 4px; font-size: 13px; font-weight: 700; color: var(--muted); }
+  .strengths { margin: 0 0 12px; padding: 0; list-style: none; }
+  .strengths li { position: relative; padding-left: 16px; margin: 2px 0; }
+  .strengths li::before {
+    content: ""; position: absolute; left: 2px; top: .5em;
+    width: 7px; height: 7px; background: var(--amber); transform: rotate(45deg);
+  }
+  .facts {
+    display: grid; grid-template-columns: 1.1fr 1fr 1fr; gap: 0;
+    margin: 0 0 10px; border: 1px solid var(--line); border-radius: 8px;
+  }
+  .facts div { padding: 7px 8px 5px; }
+  .facts div + div { border-left: 1px solid var(--line); }
+  .facts dt { font-size: 11.5px; color: var(--muted); line-height: 1.25; }
+  .facts dd { margin: 2px 0 0; font-weight: 700; font-size: 14px; font-variant-numeric: tabular-nums; }
+  .spec { display: inline-block; color: var(--green); font-weight: 700; margin-bottom: 12px; text-underline-offset: 2px; }
+  .actions { display: flex; gap: 8px; }
+  .btn {
+    flex: 1; cursor: pointer; border-radius: 8px; padding: 10px 12px 8px;
+    font-weight: 700; font-size: 14px;
+    border: 1.5px solid var(--green); background: var(--white); color: var(--green);
+  }
+  .btn:hover { background: #F1F6F3; }
+  .btn.primary { background: var(--amber); border-color: var(--amber); color: var(--asphalt); }
+  .btn.primary:hover { background: var(--amber-dark); border-color: var(--amber-dark); }
+
+  .sheet {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 6;
+    background: var(--white); border-radius: 14px 14px 0 0;
+    box-shadow: 0 -8px 28px rgba(15, 30, 22, .25);
+    max-height: 74%; overflow-y: auto; overscroll-behavior: contain;
+    transform: translateY(105%); transition: transform .25s ease;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .sheet.open { transform: none; }
+  .sheet .card { width: auto; }
+  .sheet-close {
+    position: absolute; right: 10px; top: 10px; z-index: 2;
+    width: 34px; height: 34px; border-radius: 50%; border: 0;
+    background: rgba(255, 255, 255, .94); font-size: 22px; line-height: 1; cursor: pointer;
+  }
+
+  /* ---------- Dialogs ---------- */
+  dialog {
+    border: 0; padding: 0; border-radius: 12px;
+    width: min(560px, calc(100vw - 24px)); max-height: calc(100vh - 24px);
+    box-shadow: 0 20px 50px rgba(15, 30, 22, .35);
+  }
+  dialog::backdrop { background: rgba(20, 30, 25, .5); }
+  .dlg-pad { padding: 14px 16px 16px; }
+  .dlg-img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; }
+  .muted { color: var(--muted); }
+  .spec-table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 4px 0 12px; }
+  .spec-table th, .spec-table td { text-align: left; padding: 6px 4px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .spec-table th { width: 42%; font-weight: 600; color: var(--muted); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; margin-bottom: 10px; }
+  form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600; color: var(--muted); }
+  form input, form select, form textarea {
+    font-size: 15px; color: var(--asphalt); font-weight: 400;
+    border: 1.5px solid var(--line); border-radius: 7px; padding: 8px 9px 6px; background: var(--white);
+  }
+  form input:focus, form select:focus, form textarea:focus { outline: none; border-color: var(--green); box-shadow: 0 0 0 3px rgba(11, 93, 59, .18); }
+  form textarea { resize: vertical; margin-bottom: 12px; }
+  .done { text-align: left; }
+  .done h2 { margin: 0 0 6px; font-size: 20px; }
+
+  /* ---------- Mobile ---------- */
+  @media (max-width: 640px) {
+    .panel { left: 10px; right: 10px; top: calc(10px + env(safe-area-inset-top, 0px)); width: auto; max-height: 62%; }
+    .brand { padding: 10px 14px 8px; }
+    .brand p { display: none; }
+    .brand h1 { font-size: 17px; }
+    .filter-toggle { display: inline-flex; }
+    .menus, .result-line { display: none; }
+    .panel.show-menus .menus { display: block; }
+    .panel.show-menus .result-line { display: flex; }
+    .demo-note { display: none; }
+    .grid2 { grid-template-columns: 1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .sheet, summary .chev { transition: none; }
+  }
+  @media print {
+    body * { visibility: hidden; }
+    dialog, dialog * { visibility: visible; }
+    dialog { position: absolute; inset: 0; width: 100%; max-height: none; box-shadow: none; }
+    .no-print { display: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div id="map" role="region" aria-label="Map of billboard locations"></div>
+
+<aside class="panel" id="panel" aria-label="Search and filters">
+  <div class="brand">
+    <span class="logo">Your logo</span>
+    <div>
+      <h1>Billboard inventory</h1>
+      <p>Front Range, Colorado</p>
+    </div>
+  </div>
+
+  <div class="search">
+    <div class="search-field">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/></svg>
+      <input id="q" type="search" placeholder="Panel number, road or city" autocomplete="off"
+             aria-label="Search panels" aria-controls="suggest" aria-expanded="false">
+      <button class="clear-q" id="clearQ" type="button" aria-label="Clear search" hidden>×</button>
+    </div>
+    <button class="filter-toggle" id="filterToggle" type="button" aria-expanded="false" aria-controls="menus">
+      Filters <span class="n" id="filterN" hidden></span>
+    </button>
+    <ul class="suggest" id="suggest" role="listbox" hidden></ul>
+  </div>
+
+  <div class="result-line">
+    <span id="resultLine"></span>
+    <button type="button" class="linkbtn" id="resetBtn" data-action="reset" hidden>Clear filters</button>
+  </div>
+
+  <div class="menus" id="menus"></div>
+</aside>
+
+<div class="demo-note">Sample panels for demonstration</div>
+
+<section class="sheet" id="sheet" aria-label="Panel details" aria-hidden="true">
+  <button type="button" class="sheet-close" data-action="close-sheet" aria-label="Close panel details">×</button>
+  <div id="sheetBody"></div>
+</section>
+
+<dialog id="dlg" aria-label="Panel details"><div id="dlgBody"></div></dialog>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script>
+/* =========================================================
+   DATA — sample inventory (replace with a Google Sheet / CSV feed)
+   ========================================================= */
+const SITES = [
+  ["Denver", "I-25 at Speer Blvd", -105.0147, 39.7617, "N"],
+  ["Denver", "I-25 at 6th Ave", -105.0019, 39.7255, "S"],
+  ["Denver", "I-70 at Washington St", -104.9790, 39.7836, "E"],
+  ["Denver", "Colfax Ave at Broadway", -104.9875, 39.7401, "W"],
+  ["Denver", "Colorado Blvd at Evans Ave", -104.9405, 39.6787, "N"],
+  ["Denver", "I-25 at Colorado Blvd", -104.9409, 39.6957, "S"],
+  ["Denver", "Federal Blvd at Alameda Ave", -105.0251, 39.7114, "N"],
+  ["Denver", "Peña Blvd, inbound to DEN airport", -104.7700, 39.8130, "E"],
+  ["Denver", "I-70 at Quebec St", -104.9036, 39.7840, "W"],
+  ["Denver", "Santa Fe Dr at Evans Ave", -104.9986, 39.6782, "S"],
+  ["Aurora", "I-225 at Mississippi Ave", -104.8297, 39.6976, "N"],
+  ["Aurora", "E-470 at Smoky Hill Rd", -104.7360, 39.6119, "S"],
+  ["Aurora", "Colfax Ave at Havana St", -104.8655, 39.7400, "E"],
+  ["Lakewood", "US-6 at Wadsworth Blvd", -105.0812, 39.7251, "W"],
+  ["Lakewood", "C-470 at Kipling Pkwy", -105.1105, 39.5960, "E"],
+  ["Westminster", "US-36 at Sheridan Blvd", -105.0530, 39.8530, "N"],
+  ["Broomfield", "US-36 at Interlocken Loop", -105.1250, 39.9310, "S"],
+  ["Westminster", "I-25 at 120th Ave", -104.9875, 39.9147, "N"],
+  ["Boulder", "28th St at Pearl St", -105.2585, 40.0200, "S"],
+  ["Boulder", "US-36 at Table Mesa Dr", -105.2367, 39.9867, "N"],
+  ["Boulder", "Foothills Pkwy at Arapahoe Ave", -105.2340, 40.0145, "N"],
+  ["Boulder", "28th St at Iris Ave", -105.2580, 40.0380, "N"],
+  ["Longmont", "Main St at Ken Pratt Blvd", -105.1020, 40.1520, "N"],
+  ["Longmont", "Hover St at CO-119", -105.1310, 40.1600, "S"],
+  ["Fort Collins", "I-25 at Harmony Rd", -104.9850, 40.5230, "S"],
+  ["Fort Collins", "College Ave at Drake Rd", -105.0770, 40.5530, "N"],
+  ["Fort Collins", "I-25 at Prospect Rd", -104.9830, 40.5670, "N"],
+  ["Colorado Springs", "I-25 at Garden of the Gods Rd", -104.8370, 38.8960, "S"],
+  ["Colorado Springs", "Academy Blvd at Platte Ave", -104.7570, 38.8410, "N"],
+  ["Colorado Springs", "I-25 at Woodmen Rd", -104.8170, 38.9400, "N"],
+  ["Colorado Springs", "Powers Blvd at Barnes Rd", -104.7210, 38.9130, "S"],
+  ["Colorado Springs", "Nevada Ave at Cimarron St", -104.8220, 38.8240, "E"]
+];
+
+const MARKET_CODE = {
+  "Denver": "DEN", "Aurora": "AUR", "Lakewood": "LKW", "Westminster": "WST", "Broomfield": "BRM",
+  "Boulder": "BLD", "Longmont": "LGM", "Fort Collins": "FTC", "Colorado Springs": "COS"
+};
+const MARKET_STRENGTH = {
+  "Denver": "Downtown business audience",
+  "Aurora": "Growing suburban households",
+  "Lakewood": "Mountain-bound weekend traffic",
+  "Westminster": "Busy north-metro commuter corridor",
+  "Broomfield": "Tech campus and office park traffic",
+  "Boulder": "University audience near CU Boulder",
+  "Longmont": "Local shoppers and daily commuters",
+  "Fort Collins": "Student audience near CSU",
+  "Colorado Springs": "Tourism and military traffic"
+};
+const GENERIC_STRENGTHS = [
+  "Heavy weekday commuter traffic",
+  "Long approach with an 8+ second read",
+  "Unobstructed view from the road",
+  "Close to major retail and dining",
+  "Strong weekend traffic counts",
+  "Illuminated for night visibility"
+];
+const DIR = { N: "northbound", S: "southbound", E: "eastbound", W: "westbound" };
+const SIZE_ORDER = ["14' × 48'", "10'6\" × 36'", "12' × 24'", "6' × 12'"];
+const ADS = [
+  { bg: "#F3B21B", fg: "#1F2326", ac: "#0B5D3B" },
+  { bg: "#1D4F7A", fg: "#FFFFFF", ac: "#F3B21B" },
+  { bg: "#B3261E", fg: "#FFFFFF", ac: "#FFD4CF" },
+  { bg: "#FFFFFF", fg: "#0B5D3B", ac: "#F3B21B" },
+  { bg: "#2E2A4F", fg: "#FFE8A3", ac: "#E8875B" }
+];
+
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+const PANELS = SITES.map((s, i) => {
+  const [market, road, lng, lat, facing] = s;
+  const r = mulberry32(i * 101 + 7);
+  const highway = /^(I-|US-|E-470|C-470|Peña)/.test(road);
+  let kind, style, size, digital = false;
+  if (highway) {
+    kind = "bulletin";
+    digital = r() < 0.4;
+    style = digital ? "Digital bulletin" : "Static bulletin";
+    size = r() < 0.7 ? SIZE_ORDER[0] : SIZE_ORDER[1];
+  } else {
+    const poster = r() < 0.65;
+    kind = poster ? "poster" : "junior";
+    style = poster ? "Poster" : "Junior poster";
+    size = poster ? SIZE_ORDER[2] : SIZE_ORDER[3];
+    if (poster && r() < 0.3) { digital = true; style = "Digital poster"; }
+  }
+  const range = kind === "bulletin" ? [160000, 460000] : kind === "poster" ? [45000, 130000] : [18000, 55000];
+  const impressions = Math.round((range[0] + r() * (range[1] - range[0])) / 100) * 100;
+
+  const pool = GENERIC_STRENGTHS.filter(g => !(digital && g.startsWith("Illuminated")));
+  const strengths = [road.startsWith("Peña") ? "Airport travelers to and from DEN" : MARKET_STRENGTH[market]];
+  if (digital) strengths.push("Flexible flight dates and dayparting");
+  while (strengths.length < 3) strengths.push(pool.splice(Math.floor(r() * pool.length), 1)[0]);
+
+  const read = r() < 0.6 ? "right-hand read" : "cross read";
+  const illuminated = digital || kind === "bulletin" || r() < 0.5;
+  const panelNo = 1100 + i * 17;
+  const code = MARKET_CODE[market];
+  const description = `Faces ${DIR[facing]} traffic with a ${read}.` +
+    (kind === "bulletin" ? " Visible from about 1,200 ft away." : " Eye-level view for drivers and pedestrians.");
+
+  return {
+    id: `${code}-${panelNo}-${facing}`, panelNo, market, road, lng, lat, facing, read,
+    kind, style, size, digital, illuminated, impressions, strengths, description
+  };
+});
+const byId = Object.fromEntries(PANELS.map(p => [p.id, p]));
+
+/* Illustrated placeholder photo (replace with real panel photos) */
+function photoSVG(p) {
+  const r = mulberry32(p.panelNo);
+  const W = 640, H = 400, dusk = p.digital;
+  const pal = ADS[p.panelNo % ADS.length];
+  const ridge = (base, amp) => {
+    let pts = `0,${H}`;
+    for (let k = 0; k <= 16; k++) {
+      const y = base + r() * amp - (k % 3 === 1 ? amp * 0.45 : 0);
+      pts += ` ${Math.round(k * W / 16)},${Math.round(y)}`;
+    }
+    return pts + ` ${W},${H}`;
+  };
+  const groundY = 300;
+  let pw, ph, py;
+  if (p.kind === "bulletin") { const big = p.size === SIZE_ORDER[0]; pw = big ? 440 : 380; ph = big ? 128 : 116; py = 58; }
+  else if (p.kind === "poster") { pw = 300; ph = 150; py = 92; }
+  else { pw = 190; ph = 95; py = 170; }
+  const px = (W - pw) / 2;
+  let supports;
+  if (p.kind === "bulletin") {
+    supports = `<rect x="${W / 2 - 14}" y="${py + ph}" width="28" height="${groundY + 40 - (py + ph)}" fill="#5A6066"/>` +
+               `<rect x="${px + 20}" y="${py + ph + 8}" width="${pw - 40}" height="6" fill="#4A5056"/>`;
+  } else {
+    const h = groundY + 30 - (py + ph);
+    supports = [0.22, 0.78].map(f => `<rect x="${Math.round(px + pw * f - 6)}" y="${py + ph}" width="12" height="${h}" fill="#6B5A48"/>`).join("");
+  }
+  let dashes = "";
+  for (let x = 10; x < W; x += 64) dashes += `<rect x="${x}" y="${H - 33}" width="32" height="4"/>`;
+  const fs = Math.min(ph * 0.26, (pw * 0.58) / 7.2);
+  const cr = ph * 0.26, cx = px + pw - ph * 0.36;
+  const tx = px + pw * 0.07, ty = py + ph * 0.5;
+  const font = "Arial, Helvetica, sans-serif";
+  const glow = dusk ? `<rect x="${px - 16}" y="${py - 16}" width="${pw + 32}" height="${ph + 32}" rx="8" fill="${pal.bg}" opacity="0.3"/>` : "";
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">` +
+    `<defs><linearGradient id="s" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${dusk ? "#2C3566" : "#6FA8D6"}"/><stop offset="1" stop-color="${dusk ? "#F0A06A" : "#DCEBF5"}"/></linearGradient></defs>` +
+    `<rect width="${W}" height="${H}" fill="url(#s)"/>` +
+    `<polygon points="${ridge(200, 60)}" fill="${dusk ? "#474C76" : "#9DB1BE"}"/>` +
+    `<polygon points="${ridge(250, 34)}" fill="${dusk ? "#363A5A" : "#7F96A4"}"/>` +
+    `<rect y="${groundY}" width="${W}" height="${H - groundY}" fill="${dusk ? "#3E4436" : "#A9A77C"}"/>` +
+    `<rect y="${H - 62}" width="${W}" height="62" fill="${dusk ? "#2A2D30" : "#4C5256"}"/>` +
+    `<g fill="${dusk ? "#C9B36A" : "#F2E7B0"}">${dashes}</g>` +
+    supports + glow +
+    `<rect x="${px - 8}" y="${py - 8}" width="${pw + 16}" height="${ph + 16}" fill="#2F3438"/>` +
+    `<rect x="${px}" y="${py}" width="${pw}" height="${ph}" fill="${pal.bg}"/>` +
+    `<circle cx="${cx}" cy="${py + ph / 2}" r="${cr}" fill="${pal.ac}"/>` +
+    `<text x="${tx}" y="${ty}" font-family="${font}" font-weight="800" font-size="${fs.toFixed(1)}" fill="${pal.fg}">Your ad here</text>` +
+    `<text x="${tx}" y="${(ty + fs * 0.95).toFixed(1)}" font-family="${font}" font-size="${(fs * 0.48).toFixed(1)}" fill="${pal.fg}" opacity="0.85">Panel ${p.panelNo} is available</text>` +
+    `</svg>`;
+}
+const photoCache = {};
+function photo(p) {
+  return photoCache[p.id] || (photoCache[p.id] = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(photoSVG(p)));
+}
+
+/* ---- DOM ---- */
+const fmt = n => n.toLocaleString("en-US");
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const norm = s => String(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const mqMobile = window.matchMedia("(max-width: 640px)");
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+const dur = reduceMotion ? 0 : 800;
+
+/* ---------- Filter state ---------- */
+const FACETS = [
+  { key: "market", label: "Market" },
+  { key: "style", label: "Media style" },
+  { key: "size", label: "Panel size" }
+];
+const state = { q: "", market: new Set(), style: new Set(), size: new Set(), minImp: 0 };
+const IMP_STEPS = [[0, "Any"], [50000, "50,000+"], [150000, "150,000+"], [300000, "300,000+"]];
+
+function matches(p, ignore) {
+  for (const f of FACETS) {
+    if (f.key !== ignore && state[f.key].size && !state[f.key].has(p[f.key])) return false;
+  }
+  if (p.impressions < state.minImp) return false;
+  if (state.q) {
+    const hay = norm(`${p.panelNo} ${p.id} ${p.road} ${p.market} ${p.style}`);
+    if (!norm(state.q).split(/\s+/).filter(Boolean).every(t => hay.includes(t))) return false;
+  }
+  return true;
+}
+const filtered = () => PANELS.filter(p => matches(p));
+const activeCount = () => FACETS.reduce((n, f) => n + state[f.key].size, 0) + (state.minImp ? 1 : 0);
+
+function toGeoJSON(list) {
+  return {
+    type: "FeatureCollection",
+    features: list.map(p => ({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [p.lng, p.lat] },
+      properties: { id: p.id, panelNo: String(p.panelNo), digital: p.digital }
+    }))
+  };
+}
+
+/* ---------- Build the expandable menus ---------- */
+const menus = document.getElementById("menus");
+const chev = `<svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>`;
+
+FACETS.forEach(f => {
+  let vals = [...new Set(PANELS.map(p => p[f.key]))];
+  if (f.key === "size") vals.sort((a, b) => SIZE_ORDER.indexOf(a) - SIZE_ORDER.indexOf(b));
+  const d = document.createElement("details");
+  d.dataset.facet = f.key;
+  d.innerHTML = `<summary><span>${f.label}</span><span class="meta"></span>${chev}</summary>
+    <div class="opts">${vals.map(v => `<label><input type="checkbox" value="${esc(v)}"><span>${esc(v)}</span><span class="count"></span></label>`).join("")}</div>`;
+  d.addEventListener("change", e => {
+    const v = e.target.value;
+    e.target.checked ? state[f.key].add(v) : state[f.key].delete(v);
+    render();
+    if (f.key === "market") fitTo(filtered());
+  });
+  menus.appendChild(d);
+});
+
+const impDetails = document.createElement("details");
+impDetails.innerHTML = `<summary><span>Weekly impressions</span><span class="meta"></span>${chev}</summary>
+  <div class="opts">${IMP_STEPS.map(([v, l]) => `<label><input type="radio" name="imp" value="${v}" ${v === 0 ? "checked" : ""}><span>${l}</span></label>`).join("")}</div>`;
+impDetails.addEventListener("change", e => { state.minImp = Number(e.target.value); render(); });
+menus.appendChild(impDetails);
+
+const listDetails = document.createElement("details");
+listDetails.innerHTML = `<summary><span>Panels</span><span class="meta" id="listMeta"></span>${chev}</summary><ul class="plist" id="plist"></ul>`;
+menus.appendChild(listDetails);
+
+/* ---------- Render ---------- */
+const plist = document.getElementById("plist");
+const resultLine = document.getElementById("resultLine");
+const resetBtn = document.getElementById("resetBtn");
+const filterN = document.getElementById("filterN");
+
+function render() {
+  const list = filtered();
+  const src = map && map.getSource && map.getSource("panels");
+  if (src) src.setData(toGeoJSON(list));
+
+  menus.querySelectorAll("details[data-facet]").forEach(d => {
+    const key = d.dataset.facet;
+    d.querySelectorAll("label").forEach(l => {
+      const v = l.querySelector("input").value;
+      const c = PANELS.filter(p => p[key] === v && matches(p, key)).length;
+      l.querySelector(".count").textContent = c;
+      l.classList.toggle("zero", c === 0 && !state[key].has(v));
+    });
+    d.querySelector(".meta").textContent = state[key].size ? `${state[key].size} selected` : "";
+  });
+  impDetails.querySelector(".meta").textContent = state.minImp ? `${fmt(state.minImp)}+` : "";
+
+  document.getElementById("listMeta").textContent = list.length;
+  plist.innerHTML = list.length
+    ? list.map(p => `<li><button type="button" data-action="open" data-id="${p.id}">
+        <span class="no">${p.panelNo}</span><span class="where">${esc(p.road)}</span>
+        <span class="sub">${p.market}, ${p.style.toLowerCase()}</span></button></li>`).join("")
+    : `<li class="empty">No panels match these filters. <button type="button" class="linkbtn" data-action="reset">Clear filters</button></li>`;
+
+  resultLine.textContent = `${list.length} of ${PANELS.length} panels shown`;
+  const n = activeCount();
+  resetBtn.hidden = !(n || state.q);
+  filterN.hidden = !n;
+  filterN.textContent = n;
+}
+
+/* ---------- Search with suggestions ---------- */
+const q = document.getElementById("q");
+const clearQ = document.getElementById("clearQ");
+const suggest = document.getElementById("suggest");
+let sugItems = [], sugIndex = -1;
+
+function showSuggest() {
+  if (!state.q) return hideSuggest();
+  sugItems = filtered().slice(0, 6);
+  sugIndex = -1;
+  suggest.innerHTML = sugItems.length
+    ? sugItems.map((p, i) => `<li role="option" id="sug-${i}"><button type="button" tabindex="-1" data-action="open" data-id="${p.id}">
+        <span class="no">${p.panelNo}</span><span class="where">${esc(p.road)}</span>
+        <span class="sub">${p.market}, ${p.style.toLowerCase()}</span></button></li>`).join("")
+    : `<li class="none">No panel matches “${esc(state.q)}”. Try a road, a city or a panel number.</li>`;
+  suggest.hidden = false;
+  q.setAttribute("aria-expanded", "true");
+}
+function hideSuggest() {
+  suggest.hidden = true; sugIndex = -1;
+  q.setAttribute("aria-expanded", "false");
+  q.removeAttribute("aria-activedescendant");
+}
+function moveSuggest(step) {
+  if (!sugItems.length) return;
+  sugIndex = (sugIndex + step + sugItems.length) % sugItems.length;
+  suggest.querySelectorAll("li").forEach((li, i) => li.classList.toggle("active", i === sugIndex));
+  q.setAttribute("aria-activedescendant", `sug-${sugIndex}`);
+}
+
+q.addEventListener("input", () => {
+  state.q = q.value.trim();
+  clearQ.hidden = !q.value;
+  render();
+  showSuggest();
+});
+q.addEventListener("keydown", e => {
+  if (e.key === "ArrowDown") { e.preventDefault(); if (suggest.hidden) showSuggest(); moveSuggest(1); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); moveSuggest(-1); }
+  else if (e.key === "Enter") {
+    e.preventDefault();
+    const list = filtered();
+    if (sugIndex >= 0) openPanel(sugItems[sugIndex].id);
+    else if (list.length === 1) openPanel(list[0].id);
+    else fitTo(list);
+    hideSuggest();
+  }
+  else if (e.key === "Escape") hideSuggest();
+});
+q.addEventListener("focus", () => { if (state.q) showSuggest(); });
+q.addEventListener("blur", () => setTimeout(hideSuggest, 160));
+clearQ.addEventListener("click", () => {
+  q.value = ""; state.q = ""; clearQ.hidden = true; hideSuggest(); render(); q.focus();
+});
+
+function resetAll() {
+  FACETS.forEach(f => state[f.key].clear());
+  state.minImp = 0; state.q = ""; q.value = ""; clearQ.hidden = true;
+  menus.querySelectorAll('input[type="checkbox"]').forEach(c => { c.checked = false; });
+  menus.querySelector('input[name="imp"][value="0"]').checked = true;
+  render();
+  fitTo(PANELS);
+}
+
+const panelEl = document.getElementById("panel");
+const filterToggle = document.getElementById("filterToggle");
+filterToggle.addEventListener("click", () => {
+  const open = panelEl.classList.toggle("show-menus");
+  filterToggle.setAttribute("aria-expanded", String(open));
+});
+
+/* ---------- Map ---------- */
+const map = new maplibregl.Map({
+  container: "map",
+  style: "https://tiles.openfreemap.org/styles/positron",
+  bounds: [[-105.35, 38.75], [-104.65, 40.65]],
+  fitBoundsOptions: { padding: 40 },
+  attributionControl: { compact: true }
+});
+map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
+
+function pinImage(fill, dot) {
+  const s = 2, w = 30 * s, h = 40 * s;
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  const ctx = c.getContext("2d");
+  const cx = w / 2, r = 12.5 * s, cy = r + 2.5 * s;
+  ctx.beginPath();
+  ctx.moveTo(cx, h - 2 * s);
+  ctx.bezierCurveTo(cx - 3 * s, h - 12 * s, cx - r, cy + 9 * s, cx - r, cy);
+  ctx.arc(cx, cy, r, Math.PI, 0);
+  ctx.bezierCurveTo(cx + r, cy + 9 * s, cx + 3 * s, h - 12 * s, cx, h - 2 * s);
+  ctx.closePath();
+  ctx.shadowColor = "rgba(0,0,0,.28)"; ctx.shadowBlur = 3 * s; ctx.shadowOffsetY = 1 * s;
+  ctx.fillStyle = fill; ctx.fill();
+  ctx.shadowColor = "transparent";
+  ctx.lineWidth = 2.5 * s; ctx.strokeStyle = "#FFFFFF"; ctx.stroke();
+  ctx.beginPath(); ctx.arc(cx, cy, 5 * s, 0, Math.PI * 2); ctx.fillStyle = dot; ctx.fill();
+  return ctx.getImageData(0, 0, w, h);
+}
+
+map.on("load", () => {
+  map.addImage("pin", pinImage("#0B5D3B", "#FFFFFF"), { pixelRatio: 2 });
+  map.addImage("pin-digital", pinImage("#0B5D3B", "#F3B21B"), { pixelRatio: 2 });
+
+  map.addSource("panels", {
+    type: "geojson",
+    data: toGeoJSON(filtered()),
+    cluster: true,
+    clusterMaxZoom: 12,
+    clusterRadius: 48
+  });
+
+  map.addLayer({
+    id: "cluster-halo", type: "circle", source: "panels", filter: ["has", "point_count"],
+    paint: {
+      "circle-color": "#0B5D3B", "circle-opacity": 0.18,
+      "circle-radius": ["step", ["get", "point_count"], 26, 6, 31, 12, 37]
+    }
+  });
+  map.addLayer({
+    id: "clusters", type: "circle", source: "panels", filter: ["has", "point_count"],
+    paint: {
+      "circle-color": "#0B5D3B",
+      "circle-radius": ["step", ["get", "point_count"], 18, 6, 22, 12, 27],
+      "circle-stroke-width": 3, "circle-stroke-color": "#FFFFFF"
+    }
+  });
+  map.addLayer({
+    id: "cluster-count", type: "symbol", source: "panels", filter: ["has", "point_count"],
+    layout: {
+      "text-field": ["get", "point_count_abbreviated"],
+      "text-font": ["Noto Sans Bold"], "text-size": 15, "text-allow-overlap": true
+    },
+    paint: { "text-color": "#FFFFFF" }
+  });
+  map.addLayer({
+    id: "panel-pins", type: "symbol", source: "panels", filter: ["!", ["has", "point_count"]],
+    layout: {
+      "icon-image": ["case", ["==", ["get", "digital"], true], "pin-digital", "pin"],
+      "icon-anchor": "bottom", "icon-allow-overlap": true, "icon-ignore-placement": true
+    }
+  });
+  map.addLayer({
+    id: "panel-labels", type: "symbol", source: "panels", minzoom: 12,
+    filter: ["!", ["has", "point_count"]],
+    layout: {
+      "text-field": ["get", "panelNo"], "text-font": ["Noto Sans Bold"], "text-size": 12,
+      "text-anchor": "top", "text-offset": [0, 0.3]
+    },
+    paint: { "text-color": "#0B5D3B", "text-halo-color": "#FFFFFF", "text-halo-width": 1.6 }
+  });
+
+  ["clusters", "panel-pins"].forEach(l => {
+    map.on("mouseenter", l, () => { map.getCanvas().style.cursor = "pointer"; });
+    map.on("mouseleave", l, () => { map.getCanvas().style.cursor = ""; });
+  });
+
+  map.on("click", "clusters", e => {
+    const f = e.features[0];
+    const go = zoom => map.easeTo({ center: f.geometry.coordinates, zoom: zoom + 0.3, duration: dur });
+    const res = map.getSource("panels").getClusterExpansionZoom(f.properties.cluster_id, (err, z) => { if (!err) go(z); });
+    if (res && typeof res.then === "function") res.then(go);
+  });
+  map.on("click", "panel-pins", e => openPanel(e.features[0].properties.id));
+  map.on("click", e => {
+    if (!map.queryRenderedFeatures(e.point, { layers: ["panel-pins", "clusters"] }).length) closeSheet();
+  });
+
+  fitTo(PANELS, true);
+});
+
+function fitTo(list, instant) {
+  if (!list.length) return;
+  const b = new maplibregl.LngLatBounds();
+  list.forEach(p => b.extend([p.lng, p.lat]));
+  const padding = mqMobile.matches
+    ? { top: 150, bottom: 40, left: 30, right: 30 }
+    : { top: 60, bottom: 60, left: 400, right: 70 };
+  map.fitBounds(b, { padding, maxZoom: 13, duration: instant ? 0 : dur });
+}
+
+/* ---------- Panel card ---------- */
+let popup = null;
+const sheet = document.getElementById("sheet");
+const sheetBody = document.getElementById("sheetBody");
+
+function cardHTML(p) {
+  return `<article class="card" aria-label="Panel ${p.panelNo}">
+    <div class="photo">
+      <img src="${photo(p)}" alt="Billboard panel ${p.panelNo} on ${esc(p.road)}" width="640" height="400">
+      ${p.digital ? `<span class="tag">Digital</span>` : ""}
+    </div>
+    <div class="sign"><div class="sign-inner">
+      <span class="sign-no">Panel ${p.panelNo}</span><span class="sign-id">ID ${p.id}</span>
+    </div></div>
+    <div class="card-body">
+      <p class="loc"><strong>${esc(p.road)}, ${p.market}.</strong> ${p.description}</p>
+      <h3>Advertising strengths</h3>
+      <ul class="strengths">${p.strengths.map(s => `<li>${esc(s)}</li>`).join("")}</ul>
+      <dl class="facts">
+        <div><dt>Weekly impressions</dt><dd>${fmt(p.impressions)}</dd></div>
+        <div><dt>Media style</dt><dd>${p.style}</dd></div>
+        <div><dt>Panel size</dt><dd>${esc(p.size)}</dd></div>
+      </dl>
+      <a href="#" class="spec" data-action="spec" data-id="${p.id}">Open spec sheet (PDF)</a>
+      <div class="actions">
+        <button type="button" class="btn" data-action="photo" data-id="${p.id}">Photo sheet</button>
+        <button type="button" class="btn primary" data-action="quote" data-id="${p.id}">Request quote</button>
+      </div>
+    </div>
+  </article>`;
+}
+
+function openPanel(id) {
+  const p = byId[id];
+  if (!p) return;
+  hideSuggest();
+  if (popup) { popup.remove(); popup = null; }
+  const zoom = Math.max(map.getZoom(), 13);
+  const html = cardHTML(p);
+  if (mqMobile.matches) {
+    panelEl.classList.remove("show-menus");
+    filterToggle.setAttribute("aria-expanded", "false");
+    sheetBody.innerHTML = html;
+    sheet.classList.add("open");
+    sheet.setAttribute("aria-hidden", "false");
+    sheet.scrollTop = 0;
+    map.easeTo({ center: [p.lng, p.lat], zoom, offset: [0, -map.getContainer().clientHeight * 0.28], duration: dur });
+  } else {
+    const h = map.getContainer().clientHeight;
+    map.easeTo({ center: [p.lng, p.lat], zoom, offset: [180, Math.min(250, h / 2 - 50)], duration: dur });
+    popup = new maplibregl.Popup({ anchor: "bottom", offset: [0, -40], maxWidth: "none", className: "panel-popup", focusAfterOpen: false })
+      .setLngLat([p.lng, p.lat]).setHTML(html).addTo(map);
+  }
+}
+function closeSheet() {
+  sheet.classList.remove("open");
+  sheet.setAttribute("aria-hidden", "true");
+}
+
+/* ---------- Dialogs: photo sheet, spec sheet, quote ---------- */
+const dlg = document.getElementById("dlg");
+const dlgBody = document.getElementById("dlgBody");
+const signHead = (title, sub) => `<div class="sign"><div class="sign-inner"><span class="sign-no">${title}</span><span class="sign-id">${sub}</span></div></div>`;
+
+function specRows(p) {
+  const rows = [
+    ["Panel number", p.panelNo], ["Panel ID", p.id], ["Market", p.market],
+    ["Location", p.road], ["Facing", `${DIR[p.facing][0].toUpperCase()}${DIR[p.facing].slice(1)} traffic`],
+    ["Read", p.read[0].toUpperCase() + p.read.slice(1)], ["Media style", p.style], ["Panel size", p.size],
+    ["Illuminated", p.illuminated ? "Yes" : "No"], ["Weekly impressions", fmt(p.impressions)],
+    ["Coordinates", `${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}`]
+  ];
+  if (p.digital) rows.push(["Digital rotation", "8-second spots, 6 advertisers"]);
+  return `<table class="spec-table">${rows.map(([k, v]) => `<tr><th scope="row">${k}</th><td>${esc(v)}</td></tr>`).join("")}</table>`;
+}
+
+function openPhoto(p) {
+  dlgBody.innerHTML = signHead("Photo sheet", `Panel ${p.panelNo}`) +
+    `<img class="dlg-img" src="${photo(p)}" alt="Billboard panel ${p.panelNo} on ${esc(p.road)}">
+     <div class="dlg-pad">
+       <p style="margin:0 0 12px"><strong>${esc(p.road)}, ${p.market}.</strong> ${p.description}</p>
+       <div class="actions no-print">
+         <button type="button" class="btn" data-action="close-dialog">Close</button>
+         <button type="button" class="btn primary" data-action="print">Print photo sheet</button>
+       </div>
+     </div>`;
+  dlg.showModal();
+}
+
+function openSpec(p) {
+  dlgBody.innerHTML = signHead("Spec sheet", `Panel ${p.panelNo}`) +
+    `<div class="dlg-pad">${specRows(p)}
+       <p class="muted no-print" style="margin:0 0 12px;font-size:13px">In the live map, this link opens the panel’s PDF spec sheet.</p>
+       <div class="actions no-print">
+         <button type="button" class="btn" data-action="close-dialog">Close</button>
+         <button type="button" class="btn primary" data-action="print">Print spec sheet</button>
+       </div>
+     </div>`;
+  dlg.showModal();
+}
+
+function openQuote(p) {
+  dlgBody.innerHTML = signHead("Request a quote", `Panel ${p.panelNo}`) +
+    `<form class="dlg-pad" id="quoteForm">
+       <p class="muted" style="margin:0 0 12px">${esc(p.road)}, ${p.market}. ${p.style}, ${esc(p.size)}.</p>
+       <div class="grid2">
+         <label>Name<input name="name" required autocomplete="name"></label>
+         <label>Company<input name="company" autocomplete="organization"></label>
+         <label>Email<input name="email" type="email" required autocomplete="email"></label>
+         <label>Phone<input name="phone" type="tel" autocomplete="tel"></label>
+         <label>Start date<input name="start" type="date"></label>
+         <label>Campaign length<select name="len">
+           <option>4 weeks</option><option>8 weeks</option><option selected>12 weeks</option><option>26 weeks</option><option>52 weeks</option>
+         </select></label>
+       </div>
+       <label>Message<textarea name="msg" rows="3" placeholder="Budget, creative timing, other panels you’re considering"></textarea></label>
+       <div class="actions">
+         <button type="button" class="btn" data-action="close-dialog">Cancel</button>
+         <button type="submit" class="btn primary">Send request</button>
+       </div>
+     </form>`;
+  dlgBody.querySelector("#quoteForm").addEventListener("submit", e => {
+    e.preventDefault();
+    const d = new FormData(e.target);
+    dlgBody.innerHTML = signHead("Request sent", `Panel ${p.panelNo}`) +
+      `<div class="dlg-pad done">
+         <p style="margin:0 0 8px">Thanks, ${esc(d.get("name"))}. A quote for panel ${p.panelNo} (${esc(d.get("len"))}) will go to ${esc(d.get("email"))}.</p>
+         <p class="muted" style="margin:0 0 14px;font-size:13px">Demo only: nothing was sent. In the live map, requests go to your sales inbox or CRM.</p>
+         <div class="actions"><button type="button" class="btn primary" data-action="close-dialog">Done</button></div>
+       </div>`;
+  });
+  dlg.showModal();
+  dlgBody.querySelector('input[name="name"]').focus();
+}
+
+dlg.addEventListener("click", e => { if (e.target === dlg) dlg.close(); });
+
+/* ---------- One click handler for every action ---------- */
+document.addEventListener("click", e => {
+  const el = e.target.closest("[data-action]");
+  if (!el) return;
+  const a = el.dataset.action;
+  const p = byId[el.dataset.id];
+  if (a === "open") openPanel(el.dataset.id);
+  else if (a === "spec") { e.preventDefault(); openSpec(p); }
+  else if (a === "photo") openPhoto(p);
+  else if (a === "quote") openQuote(p);
+  else if (a === "close-dialog") dlg.close();
+  else if (a === "print") window.print();
+  else if (a === "close-sheet") closeSheet();
+  else if (a === "reset") resetAll();
+});
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && !dlg.open) {
+    closeSheet();
+    if (popup) { popup.remove(); popup = null; }
+  }
+});
+
+render();
+</script>
+</body>
+</html>
